@@ -33,7 +33,7 @@ impl<'a, 'b> StencilImage<'a, 'b> {
         if let Some(luma) = self
             .image_xobject
             .decoded_object()
-            .and_then(|d| d.luma_data)
+            .and_then(|d| d.luma_data.clone())
         {
             func(luma, &self.paint);
         }
@@ -52,12 +52,10 @@ pub struct RasterImage<'a>(pub(crate) ImageXObject<'a>);
 impl RasterImage<'_> {
     /// Perform some operation with the RGB and alpha channel of the image.
     pub fn with_rgba(&self, func: impl FnOnce(RgbData, Option<LumaData>)) {
-        let decoded = self.0.decoded_object();
-
-        if let Some(decoded) = decoded
-            && let Some(rgb) = decoded.rgb_data
-        {
-            func(rgb, decoded.luma_data)
+        if let Some(decoded) = self.0.decoded_object() {
+            if let Some(rgb) = decoded.rgb_data.clone() {
+                func(rgb, decoded.luma_data.clone());
+            }
         }
     }
 }
