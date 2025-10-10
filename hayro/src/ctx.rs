@@ -14,8 +14,8 @@ use crate::{flatten, strip};
 use hayro_interpret::FillRule;
 use kurbo::{Affine, BezPath, Cap, Join, Rect, Shape, Stroke};
 use log::warn;
-use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
+use rayon::join;
 use std::sync::OnceLock;
 use std::vec;
 use std::vec::Vec;
@@ -336,81 +336,158 @@ fn render_tiles_parallel(
     height_tiles: usize,
     buffer: &mut [u8],
 ) {
-    let total_tiles = width_tiles * height_tiles;
+    if buffer.is_empty() {
+        return;
+    }
+
     let width_usize = width as usize;
     let height_usize = height as usize;
 
-    #[derive(Clone)]
-    struct TileResult {
-        x: u16,
-        y: u16,
-        width: usize,
-        height: usize,
-        pixels: Vec<u8>,
+    render_tile_rows_recursive(
+        ctx,
+        width,
+        height,
+        width_tiles,
+        height_tiles,
+        buffer,
+        0,
+        height_tiles,
+        width_usize,
+        height_usize,
+        0,
+    );
+}
+
+fn render_tile_rows_recursive(
+    ctx: &RenderContext,
+    width: u16,
+    height: u16,
+    width_tiles: usize,
+    height_tiles: usize,
+    buffer: &mut [u8],
+    y_start: usize,
+    y_end: usize,
+    width_usize: usize,
+    height_usize: usize,
+    row_start_px: usize,
+) {
+    if y_start >= y_end || buffer.is_empty() {
+        return;
     }
 
-    let tile_results: Vec<TileResult> = (0..total_tiles)
-        .into_par_iter()
-        .map_init(
-            || Fine::new(width, height),
-            |fine, index| {
-                let x = (index % width_tiles) as u16;
-                let y = (index / width_tiles) as u16;
-                let wtile = ctx.wide.get(x, y);
+    if y_end - y_start <= 1 {
+        let y_tile = y_start as u16;
+        let max_tile_height = usize::from(Tile::HEIGHT);
+        let row_start_px = row_start_px.min(height_usize);
+        let row_end_px = (row_start_px + max_tile_height).min(height_usize);
+        let actual_rows = row_end_px.saturating_sub(row_start_px);
 
-                fine.reset();
-                fine.set_coords(x, y);
-                fine.clear(wtile.bg.0);
-                for cmd in &wtile.cmds {
-                    fine.run_cmd(cmd, &ctx.alphas, &ctx.encoded_paints);
-                }
+        render_single_tile_row(
+            ctx,
+            width,
+            height,
+            width_tiles,
+            y_tile,
+            buffer,
+            actual_rows,
+            width_usize,
+        );
+    } else {
+        let mid = (y_start + y_end) / 2;
+        let max_tile_height = usize::from(Tile::HEIGHT);
+        let mid_pixel = usize::from(mid)
+            .saturating_mul(max_tile_height)
+            .min(height_usize);
+        let row_stride = width_usize * COLOR_COMPONENTS;
+        let rows_in_buffer = buffer.len() / row_stride;
+        let buffer_end_px = row_start_px + rows_in_buffer;
+        let clamped_mid_pixel = mid_pixel.clamp(row_start_px, buffer_end_px);
+        let local_split_rows = clamped_mid_pixel.saturating_sub(row_start_px);
+        let split_index = local_split_rows * row_stride;
+        let (top, bottom) = buffer.split_at_mut(split_index);
 
-                let max_tile_width = usize::from(WideTile::WIDTH);
-                let max_tile_height = usize::from(Tile::HEIGHT);
-                let tile_width =
-                    (width_usize - usize::from(x) * max_tile_width).min(max_tile_width);
-                let tile_height =
-                    (height_usize - usize::from(y) * max_tile_height).min(max_tile_height);
-
-                let mut pixels = vec![0u8; tile_width * tile_height * COLOR_COMPONENTS];
-                let blend_buf = fine.blend_buf.last().unwrap();
-
-                for j in 0..tile_height {
-                    for i in 0..tile_width {
-                        let src_idx = (i * max_tile_height + j) * COLOR_COMPONENTS;
-                        let dest_idx = (j * tile_width + i) * COLOR_COMPONENTS;
-                        let rgba = to_rgba8(
-                            &blend_buf[src_idx..src_idx + COLOR_COMPONENTS]
-                                .try_into()
-                                .unwrap(),
-                        );
-                        pixels[dest_idx..dest_idx + COLOR_COMPONENTS].copy_from_slice(&rgba);
-                    }
-                }
-
-                TileResult {
-                    x,
-                    y,
-                    width: tile_width,
-                    height: tile_height,
-                    pixels,
-                }
+        join(
+            || {
+                render_tile_rows_recursive(
+                    ctx,
+                    width,
+                    height,
+                    width_tiles,
+                    height_tiles,
+                    top,
+                    y_start,
+                    mid,
+                    width_usize,
+                    height_usize,
+                    row_start_px,
+                )
             },
-        )
-        .collect();
+            || {
+                render_tile_rows_recursive(
+                    ctx,
+                    width,
+                    height,
+                    width_tiles,
+                    height_tiles,
+                    bottom,
+                    mid,
+                    y_end,
+                    width_usize,
+                    height_usize,
+                    clamped_mid_pixel,
+                )
+            },
+        );
+    }
+}
 
-    for tile in tile_results {
-        for row in 0..tile.height {
-            let dest_row = (usize::from(tile.y) * usize::from(Tile::HEIGHT) + row)
-                * width_usize
-                * COLOR_COMPONENTS;
-            let dest_col =
-                usize::from(tile.x) * usize::from(WideTile::WIDTH) * COLOR_COMPONENTS;
-            let dest_idx = dest_row + dest_col;
-            let len = tile.width * COLOR_COMPONENTS;
-            let src_idx = row * tile.width * COLOR_COMPONENTS;
-            buffer[dest_idx..dest_idx + len]
-                .copy_from_slice(&tile.pixels[src_idx..src_idx + len]);
+fn render_single_tile_row(
+    ctx: &RenderContext,
+    width: u16,
+    height: u16,
+    width_tiles: usize,
+    y_tile: u16,
+    row_slice: &mut [u8],
+    actual_rows: usize,
+    width_usize: usize,
+) {
+    if actual_rows == 0 {
+        return;
+    }
+
+    debug_assert_eq!(row_slice.len(), actual_rows * width_usize * COLOR_COMPONENTS);
+    let mut fine = Fine::new(width, height);
+    let max_tile_width = usize::from(WideTile::WIDTH);
+    let max_tile_height = usize::from(Tile::HEIGHT);
+    let row_stride = width_usize * COLOR_COMPONENTS;
+
+    for x_tile in 0..width_tiles as u16 {
+        let wtile = ctx.wide.get(x_tile, y_tile);
+        fine.reset();
+        fine.set_coords(x_tile, y_tile);
+        fine.clear(wtile.bg.0);
+        for cmd in &wtile.cmds {
+            fine.run_cmd(cmd, &ctx.alphas, &ctx.encoded_paints);
+        }
+
+        let blend_buf = fine.blend_buf.last().unwrap();
+        let tile_width =
+            (width_usize - usize::from(x_tile) * max_tile_width).min(max_tile_width);
+        let tile_height = actual_rows.min(max_tile_height);
+        let col_offset = usize::from(x_tile) * max_tile_width * COLOR_COMPONENTS;
+
+        for row in 0..tile_height {
+            let row_offset = row * row_stride;
+            for col in 0..tile_width {
+                let src_idx = (col * max_tile_height + row) * COLOR_COMPONENTS;
+                let rgba = to_rgba8(
+                    &blend_buf[src_idx..src_idx + COLOR_COMPONENTS]
+                        .try_into()
+                        .unwrap(),
+                );
+                let dest_idx = row_offset + col_offset + col * COLOR_COMPONENTS;
+                row_slice[dest_idx..dest_idx + COLOR_COMPONENTS].copy_from_slice(&rgba);
+            }
         }
     }
 }
