@@ -24,8 +24,6 @@ pub(crate) type ScratchBuf<F> = [F; SCRATCH_BUF_SIZE];
 #[derive(Debug)]
 #[doc(hidden)]
 pub(crate) struct Fine {
-    pub(crate) width: u16,
-    pub(crate) height: u16,
     pub(crate) wide_coords: (u16, u16),
     pub(crate) blend_buf: Vec<ScratchBuf<f32>>,
     pub(crate) color_buf: ScratchBuf<f32>,
@@ -33,13 +31,11 @@ pub(crate) struct Fine {
 
 impl Fine {
     /// Create a new fine rasterizer.
-    pub(crate) fn new(width: u16, height: u16) -> Self {
+    pub(crate) fn new(_width: u16, _height: u16) -> Self {
         let blend_buf = [0.0; SCRATCH_BUF_SIZE];
         let color_buf = [0.0; SCRATCH_BUF_SIZE];
 
         Self {
-            width,
-            height,
             wide_coords: (0, 0),
             blend_buf: vec![blend_buf],
             color_buf,
@@ -67,17 +63,8 @@ impl Fine {
         }
     }
 
-    pub(crate) fn pack(&mut self, out_buf: &mut [u8]) {
-        let blend_buf = self.blend_buf.last_mut().unwrap();
-
-        pack(
-            out_buf,
-            blend_buf,
-            self.width.into(),
-            self.height.into(),
-            self.wide_coords.0.into(),
-            self.wide_coords.1.into(),
-        );
+    pub(crate) fn reset(&mut self) {
+        self.blend_buf.truncate(1);
     }
 
     pub(crate) fn run_cmd(&mut self, cmd: &Cmd, alphas: &[u8], paints: &[EncodedPaint]) {
@@ -413,42 +400,6 @@ fn mask_fn<'a>(
     })
 }
 
-fn pack(
-    out_buf: &mut [u8],
-    scratch: &ScratchBuf<f32>,
-    width: usize,
-    height: usize,
-    x: usize,
-    y: usize,
-) {
-    let base_ix = (y * usize::from(Tile::HEIGHT) * width + x * usize::from(WideTile::WIDTH))
-        * COLOR_COMPONENTS;
-
-    // Make sure we don't process rows outside the range of the pixmap.
-    let max_height = (height - y * usize::from(Tile::HEIGHT)).min(usize::from(Tile::HEIGHT));
-
-    for j in 0..max_height {
-        let line_ix = base_ix + j * width * COLOR_COMPONENTS;
-
-        // Make sure we don't process columns outside the range of the pixmap.
-        let max_width =
-            (width - x * usize::from(WideTile::WIDTH)).min(usize::from(WideTile::WIDTH));
-        let target_len = max_width * COLOR_COMPONENTS;
-        // This helps the compiler to understand that any access to `dest` cannot
-        // be out of bounds, and thus saves corresponding checks in the for loop.
-        let dest = &mut out_buf[line_ix..][..target_len];
-
-        for i in 0..max_width {
-            let src = to_rgba8(
-                &scratch[(i * usize::from(Tile::HEIGHT) + j) * COLOR_COMPONENTS..]
-                    [..COLOR_COMPONENTS]
-                    .try_into()
-                    .unwrap(),
-            );
-            dest[i * COLOR_COMPONENTS..][..COLOR_COMPONENTS].copy_from_slice(&src);
-        }
-    }
-}
 
 pub(crate) mod fill {
     // See https://www.w3.org/TR/compositing-1/#porterduffcompositingoperators for the

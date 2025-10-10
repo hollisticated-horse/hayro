@@ -39,3 +39,4 @@ xmlwriter = { version = "0.1" }
 base64 = { version = "0.22" }
 zune-jpeg = { version = "0.4" }
 fast_image_resize = { version = "3" }
+rayon = { version = "1.8" }

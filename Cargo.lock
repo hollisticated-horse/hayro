@@ -407,6 +407,7 @@ dependencies = [
  "image 0.25.8",
  "kurbo 0.12.0",
  "log",
+ "rayon",
 ]
 
 [[package]]
