@@ -3,6 +3,7 @@ use crate::encode::{Buffer, x_y_advances};
 use crate::mask::Mask;
 use crate::paint::{Image, PaintType};
 use crate::pixmap::Pixmap;
+use fast_image_resize::{FilterType as FirFilterType, Image as FirImage, PixelType, ResizeAlg, Resizer};
 use hayro_interpret::color::AlphaColor;
 use hayro_interpret::font::Glyph;
 use hayro_interpret::hayro_syntax::object::ObjectIdentifier;
@@ -11,10 +12,9 @@ use hayro_interpret::{
     ClipPath, Device, FillRule, GlyphDrawMode, LumaData, MaskType, Paint, PathDrawMode, RgbData,
     SoftMask, StrokeProps,
 };
-use image::imageops::FilterType;
-use image::{DynamicImage, ImageBuffer};
 use kurbo::{Affine, BezPath, Point, Rect};
 use std::collections::HashMap;
+use std::num::NonZeroU32;
 use std::sync::Arc;
 
 pub(crate) struct Renderer {
@@ -61,44 +61,62 @@ impl Renderer {
 
         let interpolate = rgb_data.interpolate;
 
-        let rgb_data = if x_scale >= 1.0 && y_scale >= 1.0 {
-            rgb_data.data
-        } else {
-            // Resize the image, either doing down- or upsampling.
+        let mut rgb_data = rgb_data.data;
+
+        if x_scale < 1.0 || y_scale < 1.0 {
             let new_width = (rgb_width as f32 * x_scale).ceil().max(1.0) as u32;
             let new_height = (rgb_height as f32 * y_scale).ceil().max(1.0) as u32;
 
-            let image = DynamicImage::ImageRgb8(
-                ImageBuffer::from_raw(rgb_width, rgb_height, rgb_data.data.clone()).unwrap(),
-            );
-            let resized = image.resize_exact(new_width, new_height, FilterType::CatmullRom);
+            if new_width != rgb_width || new_height != rgb_height {
+                let src_image = FirImage::from_vec_u8(
+                    NonZeroU32::new(rgb_width).unwrap(),
+                    NonZeroU32::new(rgb_height).unwrap(),
+                    std::mem::take(&mut rgb_data),
+                    PixelType::U8x3,
+                )
+                .expect("invalid RGB dimensions");
+                let mut dst_image = FirImage::new(
+                    NonZeroU32::new(new_width).unwrap(),
+                    NonZeroU32::new(new_height).unwrap(),
+                    PixelType::U8x3,
+                );
+                let mut resizer =
+                    Resizer::new(ResizeAlg::Convolution(FirFilterType::CatmullRom));
+                resizer
+                    .resize(&src_image.view(), &mut dst_image.view_mut())
+                    .expect("RGB resize failed");
 
-            let new_width = resized.width();
-            let new_height = resized.height();
-            let t_scale_x = rgb_width as f32 / new_width as f32;
-            let t_scale_y = rgb_height as f32 / new_height as f32;
+                let t_scale_x = rgb_width as f32 / new_width as f32;
+                let t_scale_y = rgb_height as f32 / new_height as f32;
+                cur_transform *= Affine::scale_non_uniform(t_scale_x as f64, t_scale_y as f64);
+                self.ctx.set_transform(cur_transform);
 
-            cur_transform *= Affine::scale_non_uniform(t_scale_x as f64, t_scale_y as f64);
-            self.ctx.set_transform(cur_transform);
-
-            rgb_width = new_width;
-            rgb_height = new_height;
-
-            resized.to_rgb8().into_raw()
-        };
+                rgb_width = new_width;
+                rgb_height = new_height;
+                rgb_data = dst_image.into_vec();
+            }
+        }
 
         let alpha_data = if let Some(alpha_data) = alpha_data {
             if alpha_data.width != rgb_width || alpha_data.height != rgb_height {
-                let image = DynamicImage::ImageLuma8(
-                    ImageBuffer::from_raw(
-                        alpha_data.width,
-                        alpha_data.height,
-                        alpha_data.data.clone(),
-                    )
-                    .unwrap(),
+                let src_image = FirImage::from_vec_u8(
+                    NonZeroU32::new(alpha_data.width).unwrap(),
+                    NonZeroU32::new(alpha_data.height).unwrap(),
+                    alpha_data.data,
+                    PixelType::U8,
+                )
+                .expect("invalid alpha dimensions");
+                let mut dst_image = FirImage::new(
+                    NonZeroU32::new(rgb_width).unwrap(),
+                    NonZeroU32::new(rgb_height).unwrap(),
+                    PixelType::U8,
                 );
-                let resized = image.resize_exact(rgb_width, rgb_height, FilterType::CatmullRom);
-                resized.to_luma8().into_raw()
+                let mut resizer =
+                    Resizer::new(ResizeAlg::Convolution(FirFilterType::CatmullRom));
+                resizer
+                    .resize(&src_image.view(), &mut dst_image.view_mut())
+                    .expect("alpha resize failed");
+                dst_image.into_vec()
             } else {
                 alpha_data.data
             }
@@ -106,11 +124,10 @@ impl Renderer {
             vec![255; rgb_width as usize * rgb_height as usize]
         };
 
-        let rgba_data = rgb_data
-            .chunks_exact(3)
-            .zip(alpha_data)
-            .flat_map(|(rgb, a)| [rgb[0], rgb[1], rgb[2], a])
-            .collect::<Vec<_>>();
+        let mut rgba_data = Vec::with_capacity(rgb_width as usize * rgb_height as usize * 4);
+        for (rgb, alpha) in rgb_data.chunks_exact(3).zip(alpha_data) {
+            rgba_data.extend_from_slice(&[rgb[0], rgb[1], rgb[2], alpha]);
+        }
 
         let mut buffer = Buffer::<4>::new_u8(rgba_data, rgb_width, rgb_height);
         buffer.premultiply();
