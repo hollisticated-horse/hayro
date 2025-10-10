@@ -76,6 +76,8 @@ pub struct RenderSettings {
     /// Maximum number of threads to use for rasterization. `None` falls back to the global
     /// configuration (including the `HAYRO_THREADS` environment variable, if present).
     pub max_threads: Option<usize>,
+    /// Image interpolation quality to use when raster images need to be resampled.
+    pub image_interpolation: ImageInterpolation,
 }
 
 impl Default for RenderSettings {
@@ -86,8 +88,21 @@ impl Default for RenderSettings {
             width: None,
             height: None,
             max_threads: None,
+            image_interpolation: ImageInterpolation::CatmullRom,
         }
     }
+}
+
+/// Sampling quality to use when resampling raster images.
+#[derive(Debug, Clone, Copy, Default)]
+pub enum ImageInterpolation {
+    /// Nearest-neighbor sampling. Fastest, lowest quality.
+    Nearest,
+    /// Bilinear sampling. Balanced speed and quality.
+    Bilinear,
+    /// Catmull-Rom resampling. Highest quality, higher cost.
+    #[default]
+    CatmullRom,
 }
 
 /// Render the page with the given settings to a pixmap.
@@ -119,6 +134,7 @@ pub fn render(
         inside_pattern: false,
         soft_mask_cache: Default::default(),
         cur_mask: None,
+        image_interpolation: render_settings.image_interpolation,
     };
 
     device.ctx.fill_rect(

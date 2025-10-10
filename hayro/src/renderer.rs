@@ -3,6 +3,7 @@ use crate::encode::{Buffer, x_y_advances};
 use crate::mask::Mask;
 use crate::paint::{Image, PaintType};
 use crate::pixmap::Pixmap;
+use crate::ImageInterpolation;
 use fast_image_resize::{FilterType as FirFilterType, Image as FirImage, PixelType, ResizeAlg, Resizer};
 use hayro_interpret::color::AlphaColor;
 use hayro_interpret::font::Glyph;
@@ -22,9 +23,24 @@ pub(crate) struct Renderer {
     pub(crate) inside_pattern: bool,
     pub(crate) soft_mask_cache: HashMap<ObjectIdentifier, Mask>,
     pub(crate) cur_mask: Option<Mask>,
+    pub(crate) image_interpolation: ImageInterpolation,
 }
 
 impl Renderer {
+    fn resize_alg(&self, interpolate: bool) -> ResizeAlg {
+        if !interpolate {
+            return ResizeAlg::Nearest;
+        }
+
+        match self.image_interpolation {
+            ImageInterpolation::Nearest => ResizeAlg::Nearest,
+            ImageInterpolation::Bilinear =>
+                ResizeAlg::Convolution(FirFilterType::Bilinear),
+            ImageInterpolation::CatmullRom =>
+                ResizeAlg::Convolution(FirFilterType::CatmullRom),
+        }
+    }
+
     fn set_stroke_properties(&mut self, stroke_props: &StrokeProps) {
         // Best-effort attempt to ensure a line width of at least 1.
         let min_factor = min_factor(&self.ctx.transform);
@@ -80,8 +96,7 @@ impl Renderer {
                     NonZeroU32::new(new_height).unwrap(),
                     PixelType::U8x3,
                 );
-                let mut resizer =
-                    Resizer::new(ResizeAlg::Convolution(FirFilterType::CatmullRom));
+                let mut resizer = Resizer::new(self.resize_alg(interpolate));
                 resizer
                     .resize(&src_image.view(), &mut dst_image.view_mut())
                     .expect("RGB resize failed");
@@ -111,8 +126,7 @@ impl Renderer {
                     NonZeroU32::new(rgb_height).unwrap(),
                     PixelType::U8,
                 );
-                let mut resizer =
-                    Resizer::new(ResizeAlg::Convolution(FirFilterType::CatmullRom));
+                let mut resizer = Resizer::new(self.resize_alg(true));
                 resizer
                     .resize(&src_image.view(), &mut dst_image.view_mut())
                     .expect("alpha resize failed");
@@ -185,6 +199,7 @@ impl Renderer {
                             cur_mask: None,
                             inside_pattern: true,
                             soft_mask_cache: Default::default(),
+                            image_interpolation: self.image_interpolation,
                         };
                         let mut initial_transform =
                             Affine::new([xs as f64, 0.0, 0.0, ys as f64, -bbox.x0, -bbox.y0]);
@@ -416,6 +431,7 @@ fn draw_soft_mask(mask: &SoftMask, width: u16, height: u16) -> Mask {
         inside_pattern: false,
         cur_mask: None,
         soft_mask_cache: Default::default(),
+        image_interpolation: ImageInterpolation::default(),
     };
 
     let bg_color = mask.background_color().to_rgba();

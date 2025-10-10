@@ -1,6 +1,6 @@
 //! This example shows you how you can render a PDF file to PNG.
 
-use hayro::{Pdf, RenderSettings, render};
+use hayro::{ImageInterpolation, Pdf, RenderSettings, render};
 use hayro_interpret::InterpreterSettings;
 use std::sync::Arc;
 
@@ -22,6 +22,9 @@ fn main() {
 
     let mut render_settings = RenderSettings::default();
     render_settings.max_threads = args.threads;
+    if let Some(filter) = args.filter {
+        render_settings.image_interpolation = filter;
+    }
 
     for (idx, page) in pdf.pages().iter().enumerate().filter(|(idx, _)| args.matches_page(*idx)) {
         let pixmap = render(page, &interpreter_settings, &render_settings);
@@ -66,6 +69,7 @@ struct CliArgs {
     page: Option<usize>,
     range: Option<std::ops::RangeInclusive<usize>>,
     threads: Option<usize>,
+    filter: Option<ImageInterpolation>,
 }
 
 impl CliArgs {
@@ -78,6 +82,7 @@ impl CliArgs {
         let mut page = None;
         let mut range = None;
         let mut threads = None;
+        let mut filter = None;
 
         while let Some(arg) = args.next() {
             match arg.as_str() {
@@ -140,6 +145,26 @@ impl CliArgs {
                     }
                     threads = Some(parsed);
                 }
+                "--filter" => {
+                    let value = args
+                        .next()
+                        .ok_or_else(|| Self::usage("expected value after --filter"))?;
+                    if filter.is_some() {
+                        return Err(Self::usage("duplicate --filter argument"));
+                    }
+                    filter = Some(match value.to_ascii_lowercase().as_str() {
+                        "nearest" => ImageInterpolation::Nearest,
+                        "bilinear" => ImageInterpolation::Bilinear,
+                        "catmullrom" | "catmull-rom" | "catmull" => {
+                            ImageInterpolation::CatmullRom
+                        }
+                        other => {
+                            return Err(Self::usage(&format!(
+                                "unknown filter '{other}', expected nearest|bilinear|catmullrom"
+                            )));
+                        }
+                    });
+                }
                 other => {
                     return Err(Self::usage(&format!("unknown argument '{other}'")));
                 }
@@ -151,12 +176,13 @@ impl CliArgs {
             page,
             range,
             threads,
+            filter,
         })
     }
 
     fn usage(msg: &str) -> String {
         format!(
-            "{msg}\n\nUsage: cargo run --example render -- <PDF_PATH> [--page N] [--range START-END] [--threads T]\n  --page N        Render only page N (1-based)\n  --range S-E     Render inclusive page range S through E (1-based)\n  --threads T     Limit rasterization to T worker threads\n\nNote: --page and --range are mutually exclusive."
+            "{msg}\n\nUsage: cargo run --example render -- <PDF_PATH> [--page N] [--range START-END] [--threads T] [--filter F]\n  --page N        Render only page N (1-based)\n  --range S-E     Render inclusive page range S through E (1-based)\n  --threads T     Limit rasterization to T worker threads\n  --filter F      Image resampling filter (nearest|bilinear|catmullrom)\n\nNote: --page and --range are mutually exclusive."
         )
     }
 
