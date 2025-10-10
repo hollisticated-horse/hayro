@@ -400,7 +400,6 @@ fn mask_fn<'a>(
     })
 }
 
-
 pub(crate) mod fill {
     // See https://www.w3.org/TR/compositing-1/#porterduffcompositingoperators for the
     // formulas.
@@ -448,15 +447,11 @@ pub(crate) mod strip {
                 let mask_a = masks[j] as f32 / 255.0;
                 let inv_src_a_mask_a = 1.0 - (mask_a * src[3]);
                 let base = j * COLOR_COMPONENTS;
-                let mut dest_vec = f32x4::from([
-                    bg_c[base],
-                    bg_c[base + 1],
-                    bg_c[base + 2],
-                    bg_c[base + 3],
-                ]);
+                let mut dest_vec =
+                    f32x4::from([bg_c[base], bg_c[base + 1], bg_c[base + 2], bg_c[base + 3]]);
                 let src_vec = f32x4::from(src);
-                dest_vec = dest_vec * f32x4::splat(inv_src_a_mask_a)
-                    + src_vec * f32x4::splat(mask_a);
+                dest_vec =
+                    dest_vec * f32x4::splat(inv_src_a_mask_a) + src_vec * f32x4::splat(mask_a);
                 let updated: [f32; COLOR_COMPONENTS] = dest_vec.into();
                 bg_c[base..base + COLOR_COMPONENTS].copy_from_slice(&updated);
             }

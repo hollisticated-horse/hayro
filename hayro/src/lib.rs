@@ -157,6 +157,19 @@ pub fn render(
     pixmap
 }
 
+/// Render the page and return its raw premultiplied RGBA data alongside the dimensions.
+pub fn render_rgba(
+    page: &Page,
+    interpreter_settings: &InterpreterSettings,
+    render_settings: &RenderSettings,
+) -> (u16, u16, Vec<u8>) {
+    let pixmap = render(page, interpreter_settings, render_settings);
+    let width = pixmap.width();
+    let height = pixmap.height();
+    let data = pixmap.take_u8();
+    (width, height, data)
+}
+
 // Just a convenience method for testing.
 #[doc(hidden)]
 pub fn render_pdf(

@@ -1,10 +1,12 @@
+use crate::ImageInterpolation;
 use crate::ctx::RenderContext;
 use crate::encode::{Buffer, x_y_advances};
 use crate::mask::Mask;
 use crate::paint::{Image, PaintType};
 use crate::pixmap::Pixmap;
-use crate::ImageInterpolation;
-use fast_image_resize::{FilterType as FirFilterType, Image as FirImage, PixelType, ResizeAlg, Resizer};
+use fast_image_resize::{
+    FilterType as FirFilterType, Image as FirImage, PixelType, ResizeAlg, Resizer,
+};
 use hayro_interpret::color::AlphaColor;
 use hayro_interpret::font::Glyph;
 use hayro_interpret::hayro_syntax::object::ObjectIdentifier;
@@ -34,10 +36,8 @@ impl Renderer {
 
         match self.image_interpolation {
             ImageInterpolation::Nearest => ResizeAlg::Nearest,
-            ImageInterpolation::Bilinear =>
-                ResizeAlg::Convolution(FirFilterType::Bilinear),
-            ImageInterpolation::CatmullRom =>
-                ResizeAlg::Convolution(FirFilterType::CatmullRom),
+            ImageInterpolation::Bilinear => ResizeAlg::Convolution(FirFilterType::Bilinear),
+            ImageInterpolation::CatmullRom => ResizeAlg::Convolution(FirFilterType::CatmullRom),
         }
     }
 

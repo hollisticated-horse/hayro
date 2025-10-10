@@ -21,9 +21,9 @@ use hayro_syntax::page::Resources;
 use kurbo::{Affine, Rect, Shape};
 use log::warn;
 use smallvec::{SmallVec, smallvec};
-use std::sync::Arc;
 use std::iter;
 use std::ops::Deref;
+use std::sync::Arc;
 
 pub(crate) enum XObject<'a> {
     FormXObject(FormXObject<'a>),
@@ -278,9 +278,7 @@ impl<'a> ImageXObject<'a> {
         if let Some(id) = self.stream.dict().obj_id() {
             return self
                 .cache
-                .get_or_insert_with(id, || {
-                    DecodedImageXObject::new(self).map(Arc::new)
-                });
+                .get_or_insert_with(id, || DecodedImageXObject::new(self).map(Arc::new));
         }
 
         DecodedImageXObject::new(self).map(Arc::new)
@@ -472,10 +470,7 @@ impl DecodedImageXObject {
                     }
                 } else if let Some(s_mask) = dict.get::<Stream>(SMASK) {
                     ImageXObject::new(&s_mask, |_| None, &obj.warning_sink, &obj.cache, true, None)
-                        .and_then(|s| {
-                            s.decoded_object()
-                                .and_then(|d| d.luma_data.clone())
-                        })
+                        .and_then(|s| s.decoded_object().and_then(|d| d.luma_data.clone()))
                 } else if let Some(mask) = dict.get::<Stream>(MASK) {
                     if let Some(obj) = ImageXObject::new(
                         &mask,

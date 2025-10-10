@@ -3,7 +3,7 @@
 
 use crate::coarse::{Wide, WideTile};
 use crate::encode::{EncodeExt, EncodedPaint};
-use crate::fine::{Fine, COLOR_COMPONENTS, to_rgba8};
+use crate::fine::{COLOR_COMPONENTS, Fine, to_rgba8};
 use crate::flatten::Line;
 use crate::mask::Mask;
 use crate::paint::{Paint, PaintType};
@@ -16,9 +16,14 @@ use kurbo::{Affine, BezPath, Cap, Join, Rect, Shape, Stroke};
 use log::warn;
 use rayon::ThreadPoolBuilder;
 use rayon::join;
+use std::cell::RefCell;
 use std::sync::OnceLock;
 use std::vec;
 use std::vec::Vec;
+
+thread_local! {
+    static FINE_POOL: RefCell<Vec<Fine>> = RefCell::new(Vec::new());
+}
 
 pub(crate) const DEFAULT_TOLERANCE: f64 = 0.1;
 /// A render context.
@@ -80,7 +85,7 @@ impl RenderContext {
             thread_limit,
         }
     }
-    
+
     pub(crate) fn thread_limit(&self) -> Option<usize> {
         self.thread_limit
     }
@@ -214,31 +219,17 @@ impl RenderContext {
             return;
         }
 
-        let effective_threads = self
-            .thread_limit
-            .or_else(|| configured_threads());
+        let effective_threads = self.thread_limit.or_else(|| configured_threads());
 
         match effective_threads {
-            Some(threads) if threads <= 1 => render_tiles_sequential(
-                self,
-                width,
-                height,
-                width_tiles,
-                height_tiles,
-                buffer,
-            ),
+            Some(threads) if threads <= 1 => {
+                render_tiles_sequential(self, width, height, width_tiles, height_tiles, buffer)
+            }
             maybe_threads => {
                 if let Some(threads) = maybe_threads {
                     install_global_pool(threads);
                 }
-                render_tiles_parallel(
-                    self,
-                    width,
-                    height,
-                    width_tiles,
-                    height_tiles,
-                    buffer,
-                );
+                render_tiles_parallel(self, width, height, width_tiles, height_tiles, buffer);
             }
         }
     }
@@ -300,17 +291,16 @@ fn render_tiles_sequential(
                 fine.run_cmd(cmd, &ctx.alphas, &ctx.encoded_paints);
             }
 
-            let tile_width = (width_usize - usize::from(x_tile) * max_tile_width)
-                .min(max_tile_width);
-            let tile_height = (height_usize - usize::from(y_tile) * max_tile_height)
-                .min(max_tile_height);
+            let tile_width =
+                (width_usize - usize::from(x_tile) * max_tile_width).min(max_tile_width);
+            let tile_height =
+                (height_usize - usize::from(y_tile) * max_tile_height).min(max_tile_height);
             let blend_buf = fine.blend_buf.last().unwrap();
 
             for row in 0..tile_height {
                 let dest_row =
                     (usize::from(y_tile) * max_tile_height + row) * width_usize * COLOR_COMPONENTS;
-                let dest_col =
-                    usize::from(x_tile) * max_tile_width * COLOR_COMPONENTS;
+                let dest_col = usize::from(x_tile) * max_tile_width * COLOR_COMPONENTS;
                 let dest_idx = dest_row + dest_col;
 
                 for col in 0..tile_width {
@@ -455,41 +445,56 @@ fn render_single_tile_row(
         return;
     }
 
-    debug_assert_eq!(row_slice.len(), actual_rows * width_usize * COLOR_COMPONENTS);
-    let mut fine = Fine::new(width, height);
+    debug_assert_eq!(
+        row_slice.len(),
+        actual_rows * width_usize * COLOR_COMPONENTS
+    );
     let max_tile_width = usize::from(WideTile::WIDTH);
     let max_tile_height = usize::from(Tile::HEIGHT);
     let row_stride = width_usize * COLOR_COMPONENTS;
 
-    for x_tile in 0..width_tiles as u16 {
-        let wtile = ctx.wide.get(x_tile, y_tile);
-        fine.reset();
-        fine.set_coords(x_tile, y_tile);
-        fine.clear(wtile.bg.0);
-        for cmd in &wtile.cmds {
-            fine.run_cmd(cmd, &ctx.alphas, &ctx.encoded_paints);
-        }
+    with_thread_fine(width, height, |fine| {
+        for x_tile in 0..width_tiles as u16 {
+            let wtile = ctx.wide.get(x_tile, y_tile);
+            fine.reset();
+            fine.set_coords(x_tile, y_tile);
+            fine.clear(wtile.bg.0);
+            for cmd in &wtile.cmds {
+                fine.run_cmd(cmd, &ctx.alphas, &ctx.encoded_paints);
+            }
 
-        let blend_buf = fine.blend_buf.last().unwrap();
-        let tile_width =
-            (width_usize - usize::from(x_tile) * max_tile_width).min(max_tile_width);
-        let tile_height = actual_rows.min(max_tile_height);
-        let col_offset = usize::from(x_tile) * max_tile_width * COLOR_COMPONENTS;
+            let blend_buf = fine.blend_buf.last().unwrap();
+            let tile_width =
+                (width_usize - usize::from(x_tile) * max_tile_width).min(max_tile_width);
+            let tile_height = actual_rows.min(max_tile_height);
+            let col_offset = usize::from(x_tile) * max_tile_width * COLOR_COMPONENTS;
 
-        for row in 0..tile_height {
-            let row_offset = row * row_stride;
-            for col in 0..tile_width {
-                let src_idx = (col * max_tile_height + row) * COLOR_COMPONENTS;
-                let rgba = to_rgba8(
-                    &blend_buf[src_idx..src_idx + COLOR_COMPONENTS]
-                        .try_into()
-                        .unwrap(),
-                );
-                let dest_idx = row_offset + col_offset + col * COLOR_COMPONENTS;
-                row_slice[dest_idx..dest_idx + COLOR_COMPONENTS].copy_from_slice(&rgba);
+            for row in 0..tile_height {
+                let row_offset = row * row_stride;
+                for col in 0..tile_width {
+                    let src_idx = (col * max_tile_height + row) * COLOR_COMPONENTS;
+                    let rgba = to_rgba8(
+                        &blend_buf[src_idx..src_idx + COLOR_COMPONENTS]
+                            .try_into()
+                            .unwrap(),
+                    );
+                    let dest_idx = row_offset + col_offset + col * COLOR_COMPONENTS;
+                    row_slice[dest_idx..dest_idx + COLOR_COMPONENTS].copy_from_slice(&rgba);
+                }
             }
         }
-    }
+    });
+}
+
+fn with_thread_fine<R>(width: u16, height: u16, op: impl FnOnce(&mut Fine) -> R) -> R {
+    FINE_POOL.with(|pool| {
+        let mut pool = pool.borrow_mut();
+        let mut fine = pool.pop().unwrap_or_else(|| Fine::new(width, height));
+        let result = op(&mut fine);
+        fine.reset();
+        pool.push(fine);
+        result
+    })
 }
 
 fn configured_threads() -> Option<usize> {
@@ -516,13 +521,8 @@ fn configured_threads() -> Option<usize> {
 fn install_global_pool(threads: usize) {
     static POOL_CONFIGURED: OnceLock<()> = OnceLock::new();
     POOL_CONFIGURED.get_or_init(|| {
-        if let Err(err) = ThreadPoolBuilder::new()
-            .num_threads(threads)
-            .build_global()
-        {
-            warn!(
-                "failed to configure rayon thread pool for HAYRO_THREADS={threads}: {err}"
-            );
+        if let Err(err) = ThreadPoolBuilder::new().num_threads(threads).build_global() {
+            warn!("failed to configure rayon thread pool for HAYRO_THREADS={threads}: {err}");
         }
     });
 }

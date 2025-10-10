@@ -26,7 +26,12 @@ fn main() {
         render_settings.image_interpolation = filter;
     }
 
-    for (idx, page) in pdf.pages().iter().enumerate().filter(|(idx, _)| args.matches_page(*idx)) {
+    for (idx, page) in pdf
+        .pages()
+        .iter()
+        .enumerate()
+        .filter(|(idx, _)| args.matches_page(*idx))
+    {
         let pixmap = render(page, &interpreter_settings, &render_settings);
         std::fs::write(format!("rendered_{idx}.png"), pixmap.take_png()).unwrap();
     }
@@ -75,9 +80,7 @@ struct CliArgs {
 impl CliArgs {
     fn parse() -> Result<Self, String> {
         let mut args = std::env::args().skip(1);
-        let pdf_path = args
-            .next()
-            .ok_or_else(|| Self::usage("missing PDF path"))?;
+        let pdf_path = args.next().ok_or_else(|| Self::usage("missing PDF path"))?;
 
         let mut page = None;
         let mut range = None;
@@ -96,9 +99,9 @@ impl CliArgs {
                     if range.is_some() {
                         return Err(Self::usage("--page conflicts with --range"));
                     }
-                    let parsed = value.parse::<usize>().map_err(|_| {
-                        Self::usage("--page expects a positive integer (1-based)")
-                    })?;
+                    let parsed = value
+                        .parse::<usize>()
+                        .map_err(|_| Self::usage("--page expects a positive integer (1-based)"))?;
                     if parsed == 0 {
                         return Err(Self::usage("--page expects a positive integer (1-based)"));
                     }
@@ -117,12 +120,14 @@ impl CliArgs {
                     let (start, end) = value
                         .split_once('-')
                         .ok_or_else(|| Self::usage("--range expects START-END (1-based)"))?;
-                    let start = start.trim().parse::<usize>().map_err(|_| {
-                        Self::usage("--range expects START-END (1-based)")
-                    })?;
-                    let end = end.trim().parse::<usize>().map_err(|_| {
-                        Self::usage("--range expects START-END (1-based)")
-                    })?;
+                    let start = start
+                        .trim()
+                        .parse::<usize>()
+                        .map_err(|_| Self::usage("--range expects START-END (1-based)"))?;
+                    let end = end
+                        .trim()
+                        .parse::<usize>()
+                        .map_err(|_| Self::usage("--range expects START-END (1-based)"))?;
                     if start == 0 || end == 0 || start > end {
                         return Err(Self::usage(
                             "--range expects START-END with START <= END and both >= 1",
@@ -137,9 +142,9 @@ impl CliArgs {
                     if threads.is_some() {
                         return Err(Self::usage("duplicate --threads argument"));
                     }
-                    let parsed = value.parse::<usize>().map_err(|_| {
-                        Self::usage("--threads expects a positive integer")
-                    })?;
+                    let parsed = value
+                        .parse::<usize>()
+                        .map_err(|_| Self::usage("--threads expects a positive integer"))?;
                     if parsed == 0 {
                         return Err(Self::usage("--threads expects a positive integer"));
                     }
@@ -155,9 +160,7 @@ impl CliArgs {
                     filter = Some(match value.to_ascii_lowercase().as_str() {
                         "nearest" => ImageInterpolation::Nearest,
                         "bilinear" => ImageInterpolation::Bilinear,
-                        "catmullrom" | "catmull-rom" | "catmull" => {
-                            ImageInterpolation::CatmullRom
-                        }
+                        "catmullrom" | "catmull-rom" | "catmull" => ImageInterpolation::CatmullRom,
                         other => {
                             return Err(Self::usage(&format!(
                                 "unknown filter '{other}', expected nearest|bilinear|catmullrom"
