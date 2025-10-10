@@ -406,6 +406,7 @@ pub(crate) mod fill {
     // formulas.
 
     use crate::fine::{COLOR_COMPONENTS, TILE_HEIGHT_COMPONENTS};
+    use wide::f32x4;
 
     pub(crate) fn alpha_composite<T: Iterator<Item = [f32; COLOR_COMPONENTS]>>(
         target: &mut [f32],
@@ -413,10 +414,14 @@ pub(crate) mod fill {
     ) {
         for strip in target.chunks_exact_mut(TILE_HEIGHT_COMPONENTS) {
             for bg_c in strip.chunks_exact_mut(COLOR_COMPONENTS) {
-                let src_c = source.next().unwrap();
-                for i in 0..COLOR_COMPONENTS {
-                    bg_c[i] = src_c[i] + (bg_c[i] * (1.0 - src_c[3]));
-                }
+                let src = source.next().unwrap();
+                let src_vec = f32x4::from(src);
+                let mut dest_vec = f32x4::from([bg_c[0], bg_c[1], bg_c[2], bg_c[3]]);
+                let alpha = src[3];
+                let inv = f32x4::splat(1.0 - alpha);
+                dest_vec = src_vec + dest_vec * inv;
+                let updated: [f32; COLOR_COMPONENTS] = dest_vec.into();
+                bg_c.copy_from_slice(&updated);
             }
         }
     }
@@ -425,6 +430,7 @@ pub(crate) mod fill {
 pub(crate) mod strip {
     use crate::fine::{COLOR_COMPONENTS, TILE_HEIGHT_COMPONENTS};
     use crate::tile::Tile;
+    use wide::f32x4;
 
     pub(crate) fn alpha_composite<
         T: Iterator<Item = [f32; COLOR_COMPONENTS]>,
@@ -438,16 +444,21 @@ pub(crate) mod strip {
             let masks = alphas.next().unwrap();
 
             for j in 0..usize::from(Tile::HEIGHT) {
-                let src_c = source.next().unwrap();
+                let src = source.next().unwrap();
                 let mask_a = masks[j] as f32 / 255.0;
-                let inv_src_a_mask_a = 1.0 - (mask_a * src_c[3]);
-
-                for i in 0..COLOR_COMPONENTS {
-                    let p1 = bg_c[j * COLOR_COMPONENTS + i] * inv_src_a_mask_a;
-                    let p2 = src_c[i] * mask_a;
-
-                    bg_c[j * COLOR_COMPONENTS + i] = p1 + p2;
-                }
+                let inv_src_a_mask_a = 1.0 - (mask_a * src[3]);
+                let base = j * COLOR_COMPONENTS;
+                let mut dest_vec = f32x4::from([
+                    bg_c[base],
+                    bg_c[base + 1],
+                    bg_c[base + 2],
+                    bg_c[base + 3],
+                ]);
+                let src_vec = f32x4::from(src);
+                dest_vec = dest_vec * f32x4::splat(inv_src_a_mask_a)
+                    + src_vec * f32x4::splat(mask_a);
+                let updated: [f32; COLOR_COMPONENTS] = dest_vec.into();
+                bg_c[base..base + COLOR_COMPONENTS].copy_from_slice(&updated);
             }
         }
     }
