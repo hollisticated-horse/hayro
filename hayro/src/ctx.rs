@@ -37,11 +37,12 @@ pub(crate) struct RenderContext {
     pub(crate) fill_rule: FillRule,
     pub(crate) encoded_paints: Vec<EncodedPaint>,
     pub(crate) anti_aliasing: bool,
+    thread_limit: Option<usize>,
 }
 
 impl RenderContext {
     /// Create a new render context with the given width and height in pixels.
-    pub(crate) fn new(width: u16, height: u16) -> Self {
+    pub(crate) fn new(width: u16, height: u16, thread_limit: Option<usize>) -> Self {
         let wide = Wide::new(width, height);
 
         let alphas = vec![];
@@ -60,6 +61,7 @@ impl RenderContext {
         };
         let encoded_paints = vec![];
         let anti_aliasing = true;
+        let thread_limit = thread_limit.filter(|&n| n > 0);
 
         Self {
             width,
@@ -75,7 +77,12 @@ impl RenderContext {
             stroke,
             encoded_paints,
             anti_aliasing,
+            thread_limit,
         }
+    }
+    
+    pub(crate) fn thread_limit(&self) -> Option<usize> {
+        self.thread_limit
     }
 
     fn encode_paint(&mut self, paint_type: PaintType) -> Paint {
@@ -207,7 +214,11 @@ impl RenderContext {
             return;
         }
 
-        match configured_threads() {
+        let effective_threads = self
+            .thread_limit
+            .or_else(|| configured_threads());
+
+        match effective_threads {
             Some(threads) if threads <= 1 => render_tiles_sequential(
                 self,
                 width,

@@ -73,6 +73,9 @@ pub struct RenderSettings {
     /// The height of the viewport. If this is set to `None`, the height will be chosen
     /// automatically based on the scale factor and the dimensions of the PDF.
     pub height: Option<u16>,
+    /// Maximum number of threads to use for rasterization. `None` falls back to the global
+    /// configuration (including the `HAYRO_THREADS` environment variable, if present).
+    pub max_threads: Option<usize>,
 }
 
 impl Default for RenderSettings {
@@ -82,6 +85,7 @@ impl Default for RenderSettings {
             y_scale: 1.0,
             width: None,
             height: None,
+            max_threads: None,
         }
     }
 }
@@ -111,7 +115,7 @@ pub fn render(
         interpreter_settings.clone(),
     );
     let mut device = Renderer {
-        ctx: RenderContext::new(pix_width, pix_height),
+        ctx: RenderContext::new(pix_width, pix_height, render_settings.max_threads),
         inside_pattern: false,
         soft_mask_cache: Default::default(),
         cur_mask: None,

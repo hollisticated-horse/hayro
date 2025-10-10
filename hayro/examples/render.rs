@@ -20,7 +20,8 @@ fn main() {
 
     let interpreter_settings = InterpreterSettings::default();
 
-    let render_settings = RenderSettings::default();
+    let mut render_settings = RenderSettings::default();
+    render_settings.max_threads = args.threads;
 
     for (idx, page) in pdf.pages().iter().enumerate().filter(|(idx, _)| args.matches_page(*idx)) {
         let pixmap = render(page, &interpreter_settings, &render_settings);
@@ -64,6 +65,7 @@ struct CliArgs {
     pdf_path: String,
     page: Option<usize>,
     range: Option<std::ops::RangeInclusive<usize>>,
+    threads: Option<usize>,
 }
 
 impl CliArgs {
@@ -75,6 +77,7 @@ impl CliArgs {
 
         let mut page = None;
         let mut range = None;
+        let mut threads = None;
 
         while let Some(arg) = args.next() {
             match arg.as_str() {
@@ -122,6 +125,21 @@ impl CliArgs {
                     }
                     range = Some(start - 1..=end - 1);
                 }
+                "--threads" => {
+                    let value = args
+                        .next()
+                        .ok_or_else(|| Self::usage("expected value after --threads"))?;
+                    if threads.is_some() {
+                        return Err(Self::usage("duplicate --threads argument"));
+                    }
+                    let parsed = value.parse::<usize>().map_err(|_| {
+                        Self::usage("--threads expects a positive integer")
+                    })?;
+                    if parsed == 0 {
+                        return Err(Self::usage("--threads expects a positive integer"));
+                    }
+                    threads = Some(parsed);
+                }
                 other => {
                     return Err(Self::usage(&format!("unknown argument '{other}'")));
                 }
@@ -132,12 +150,13 @@ impl CliArgs {
             pdf_path,
             page,
             range,
+            threads,
         })
     }
 
     fn usage(msg: &str) -> String {
         format!(
-            "{msg}\n\nUsage: cargo run --example render -- <PDF_PATH> [--page N] [--range START-END]\n  --page N        Render only page N (1-based)\n  --range S-E     Render inclusive page range S through E (1-based)\n\nNote: --page and --range are mutually exclusive."
+            "{msg}\n\nUsage: cargo run --example render -- <PDF_PATH> [--page N] [--range START-END] [--threads T]\n  --page N        Render only page N (1-based)\n  --range S-E     Render inclusive page range S through E (1-based)\n  --threads T     Limit rasterization to T worker threads\n\nNote: --page and --range are mutually exclusive."
         )
     }
 

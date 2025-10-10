@@ -181,7 +181,7 @@ impl Renderer {
                         let pix_height = y_step.abs().round() as u16;
 
                         let mut renderer = Renderer {
-                            ctx: RenderContext::new(pix_width, pix_height),
+                            ctx: RenderContext::new(pix_width, pix_height, self.ctx.thread_limit()),
                             cur_mask: None,
                             inside_pattern: true,
                             soft_mask_cache: Default::default(),
@@ -412,7 +412,7 @@ impl<'a> Device<'a> for Renderer {
 
 fn draw_soft_mask(mask: &SoftMask, width: u16, height: u16) -> Mask {
     let mut renderer = Renderer {
-        ctx: RenderContext::new(width, height),
+        ctx: RenderContext::new(width, height, None),
         inside_pattern: false,
         cur_mask: None,
         soft_mask_cache: Default::default(),
